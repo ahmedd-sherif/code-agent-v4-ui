@@ -1,0 +1,144 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.calculator {
+    background-color: #1a1a2e;
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    width: 400px;
+}
+
+.calculator h1 {
+    color: #fff;
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 24px;
+}
+
+.display {
+    background-color: #16213e;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+    text-align: right;
+    min-height: 100px;
+}
+
+.previous-operand {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 18px;
+    min-height: 25px;
+    word-wrap: break-word;
+    word-break: break-all;
+}
+
+.current-operand {
+    color: #fff;
+    font-size: 36px;
+    font-weight: bold;
+    word-wrap: break-word;
+    word-break: break-all;
+}
+
+.buttons-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+button {
+    border: none;
+    outline: none;
+    padding: 15px;
+    font-size: 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 600;
+}
+
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+[data-number] {
+    background-color: #e94560;
+    color: #fff;
+}
+
+[data-number]:hover {
+    background-color: #ff6b85;
+}
+
+[data-operation] {
+    background-color: #0f3460;
+    color: #fff;
+}
+
+[data-operation]:hover {
+    background-color: #1a4d8f;
+}
+
+[data-action="clear"] {
+    background-color: #16213e;
+    color: #e94560;
+}
+
+[data-action="clear"]:hover {
+    background-color: #2a3a5a;
+}
+
+[data-action="delete"] {
+    background-color: #16213e;
+    color: #fff;
+}
+
+[data-action="delete"]:hover {
+    background-color: #2a3a5a;
+}
+
+[data-action="equals"] {
+    background-color: #16213e;
+    color: #4ade80;
+}
+
+[data-action="equals"]:hover {
+    background-color: #2a3a5a;
+}
+
+.span-two {
+    grid-column: span 2;
+}
+
+@media (max-width: 450px) {
+    .calculator {
+        width: 90%;
+    }
+    
+    button {
+        padding: 12px;
+        font-size: 18px;
+    }
+    
+    .current-operand {
+        font-size: 28px;
+    }
+}
