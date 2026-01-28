@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Definition - Autonomous Code Agent</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1cm;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 11px;
+            line-height: 1.2;
+            color: #222;
+        }
+
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 2px;
+            margin-bottom: 5px;
+            font-size: 16px;
+            margin-top: 0;
+        }
+
+        h2 {
+            color: #2c3e50;
+            margin-top: 8px;
+            margin-bottom: 3px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 1px;
+            font-size: 13px;
+            background-color: #f0f0f0;
+            padding-left: 5px;
+        }
+
+        .header-info {
+            background-color: #e9ecef;
+            padding: 5px;
+            margin-bottom: 5px;
+            border-left: 3px solid #007bff;
+            font-size: 11px;
+        }
+
+        .header-info p {
+            margin: 0;
+            display: inline-block;
+            margin-right: 20px;
+        }
+
+        p {
+            margin: 2px 0;
+            text-align: justify;
+        }
+
+        ul {
+            padding-left: 15px;
+            margin: 2px 0;
+        }
+
+        li {
+            margin-bottom: 1px;
+        }
+
+        .section-title {
+            font-weight: bold;
+            color: #555;
+        }
+
+        @media print {
+            body {
+                padding: 10px;
+            }
+
+            @page {
+                margin: 0.5cm;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>CSAI810 Project Definition</h1>
+
+    <div class="header-info">
+        <p>Group Category: CSAI810 Groups</p>
+        <p>Group Name: CSAI 810 Section 44</p>
+    </div>
+
+    <h2>1. Title of your project</h2>
+    <p><strong>Autonomous Code Agent</strong></p>
+
+    <h2>2. Short description of goals and limitations</h2>
+    <p><span class="section-title">Goals:</span><br>
+        The main goal is to build a comprehensive, local-first AI coding assistant that can autonomously help developers
+        build software. Unlike standard chatbots, the Autonomous Code Agent enables the LLM to actively interact with
+        the development environment—writing files, executing terminal commands, managing git repositories, and
+        performing web searches to solve complex coding tasks. It aims to bridge the gap between "chatting about code"
+        and "doing the coding."</p>
+
+    <p><span class="section-title">Limitations:</span></p>
+    <ul>
+        <li><strong>Context Window:</strong> The agent's understanding of large codebases is limited by the context
+            window of the underlying models (though retrieval techniques are used).</li>
+        <li><strong>Visual Validation:</strong> The agent cannot "see" the UI it builds (no computer vision integration
+            yet), so it relies on text-based feedback and user verification.</li>
+        <li><strong>Model Dependency:</strong> Performance heavily depends on the reasoning capability of the selected
+            model (e.g., GPT-4o vs. Llama 3).</li>
+    </ul>
+
+    <h2>3. What will you achieve (learn + produce) and what is your prior knowledge of this task?</h2>
+    <p><span class="section-title">Produce:</span><br>
+        We will produce a fully functional Streamlit-based application (deployable as a Local Web App or Desktop
+        Interface) that serves as the interface for the agent. The system will include a persistent memory layer
+        (SQLite), a robust toolset (File I/O, Git, Terminal, Search), and a flexible model switcher supporting both
+        local (Ollama) and cloud (OpenRouter, Google Gemini) models.</p>
+
+    <p><span class="section-title">Learn:</span><br>
+        We will learn how to:</p>
+    <ul>
+        <li>Design tool-use loops (ReAct pattern) for LLMs.</li>
+        <li>Manage structured output and function calling across different model providers.</li>
+        <li>Implement persistent conversation history and project context management.</li>
+        <li>Integrate local development tools (Git, Terminal) safely with an AI agent.</li>
+    </ul>
+
+    <p><span class="section-title">Prior Knowledge:</span><br>
+        We have prior experience with Python programming, API integrations (REST), and basic prompting. We are familiar
+        with the concept of Agents but want to deepen our understanding of building a cohesive "Agentic" system.</p>
+
+    <h2>4. Why do you want to do this project?</h2>
+    <p>We want to move beyond simple "Chat Q&A" interfaces. Real developer productivity comes from an agent that can
+        <em>act</em>—scaffold projects, fix bugs directly in files, and handle version control. This project allows us
+        to explore the cutting edge of Agentic AI while building a tool that we can actually use in our daily workflow.
+    </p>
+
+    <h2>5. What will be the final deliverable and by whom could it be used?</h2>
+    <p><span class="section-title">Final Deliverable:</span><br>
+        A software package (Python/Streamlit) containing:</p>
+    <ul>
+        <li>The "Code Agent" application.</li>
+        <li>A suite of integrated tools (File System, Terminal, Git, Search).</li>
+        <li>A unified UI for chat, workspace management, and model selection.</li>
+        <li>Documentation for setup and usage.</li>
+    </ul>
+
+    <p><span class="section-title">Target User:</span><br>
+        Software developers, students, and hobbyists who want an AI assistant that runs locally and integrates directly
+        with their project files, rather than copying-pasting code from a web browser.</p>
+
+    <h2>6. Project boundaries (30 Hours Scope)</h2>
+    <p><span class="section-title">Included (In-Scope):</span></p>
+    <ul>
+        <li><strong>Core Agent Loop:</strong> Implementation of the thinking/acting loop using LiteLLM/Google Generative
+            AI.</li>
+        <li><strong>Model Infrastructure:</strong> Integration with <strong>Ollama</strong> for local model inference
+            and <strong>Ngrok</strong> to securely expose and access local LLM APIs.</li>
+        <li><strong>Tool Implementation:</strong>
+            <ul>
+                <li>File System (Read/Write/List)</li>
+                <li>Terminal (Run safe commands)</li>
+                <li>Git (Commit, Push, Pull)</li>
+                <li>Web Search (Tavily/DuckDuckGo)</li>
+            </ul>
+        </li>
+        <li><strong>UI:</strong> A polished Streamlit interface with a sticky header, chat history, and sidebar for
+            workspace management.</li>
+        <li><strong>Project Management:</strong> Ability to switch between different "project" folders/contexts.</li>
+        <li><strong>Memory:</strong> Storing chat history in a local SQLite database.</li>
+    </ul>
+
+    <p><span class="section-title">Excluded (Out-of-Scope):</span></p>
+    <ul>
+        <li><strong>Multi-User Auth:</strong> The app is designed for single-user local usage.</li>
+        <li><strong>Visual UI Testing:</strong> Writing automated Selenium tests or visual regression testing.</li>
+        <li><strong>IDE Extensions:</strong> We are building a standalone app, not a VS Code extension (though it acts
+            similarly).</li>
+        <li><strong>Voice Mode:</strong> Text-only interaction.</li>
+    </ul>
+
+</body>
+
+</html>

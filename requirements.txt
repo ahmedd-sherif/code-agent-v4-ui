@@ -1,0 +1,7 @@
+google-adk
+python-dotenv
+PyGithub
+gitpython
+litellm
+tavily-python
+streamlit

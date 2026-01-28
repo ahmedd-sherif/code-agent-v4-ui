@@ -1,0 +1,27 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Node/Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# System Generated
+Created Programs/
+code_agent/storage/memory.db
+*.db
+*.sqlite3
+
+# IDES
+.vscode/
+.idea/
+
+# Logs
+*.log
