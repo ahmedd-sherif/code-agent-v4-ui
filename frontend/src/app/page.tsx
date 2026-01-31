@@ -619,7 +619,17 @@ export default function AgentManager() {
                                         <ReactMarkdown
                                             components={{
                                                 code: CodeBlock,
-                                                pre: ({ children }) => <>{children}</>
+                                                pre: ({ children }) => <>{children}</>,
+                                                h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 text-purple-200 border-b border-white/10 pb-2">{children}</h1>,
+                                                h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 mt-5 text-purple-100">{children}</h2>,
+                                                h3: ({ children }) => <h3 className="text-lg font-medium mb-2 mt-4 text-purple-50">{children}</h3>,
+                                                ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-1">{children}</ul>,
+                                                ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-1">{children}</ol>,
+                                                li: ({ children }) => <li className="mb-0.5">{children}</li>,
+                                                p: ({ children }) => <p className="mb-4 last:mb-0 leading-7">{children}</p>,
+                                                strong: ({ children }) => <strong className="font-bold text-white">{children}</strong>,
+                                                blockquote: ({ children }) => <blockquote className="border-l-4 border-purple-500/50 pl-4 py-1 my-4 bg-white/5 rounded-r italic">{children}</blockquote>,
+                                                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{children}</a>
                                             }}
                                         >
                                             {msg.content}
