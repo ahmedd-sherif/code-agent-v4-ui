@@ -1,0 +1,2 @@
+NAME               ID              SIZE     MODIFIED   
+qwen3-coder:30b    06c1097efce0    18 GB    4 days ago    

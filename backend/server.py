@@ -21,7 +21,7 @@ import shutil
 from pydantic import BaseModel
 from typing import Optional, List
 from fastapi.responses import StreamingResponse
-from litellm import completion
+from litellm import completion, acompletion
 
 # --- Imports from Code Agent ---
 from code_agent.storage import list_sessions, create_session, get_session_history, add_message, delete_session, update_session_name, get_session
@@ -138,7 +138,7 @@ async def chat_endpoint(request: ChatRequest):
     
     # Get session context to check if it's bound to a project
     session_info = get_session(request.session_id)
-    project_path = session_info[2] if session_info else None
+    project_path = session_info["project_path"] if session_info else None
     
     # Prepare tools with context
     current_tools = []
@@ -255,7 +255,7 @@ async def chat_endpoint(request: ChatRequest):
             yield json.dumps({"type": "status", "content": f"Thinking... (Step {loop_count})"}) + "\n"
             
             try:
-                response = completion(
+                response = await acompletion(
                     model=request.model,
                     messages=messages,
                     tools=tool_schemas,
@@ -266,7 +266,7 @@ async def chat_endpoint(request: ChatRequest):
                 collected_content = ""
                 collected_tool_calls = []
                 
-                for chunk in response:
+                async for chunk in response:
                     delta = chunk.choices[0].delta if chunk.choices else None
                     if delta:
                         if delta.content:

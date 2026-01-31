@@ -5,3 +5,5 @@ gitpython
 litellm
 tavily-python
 streamlit
+fastapi
+uvicorn
