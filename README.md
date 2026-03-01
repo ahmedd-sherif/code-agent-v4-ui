@@ -1,6 +1,6 @@
 # Code Agent V4
 
-This is **Code Agent V4**, a fully functional AI Code Assistant powered by Local Ollama models (such as `qwen2.5-coder` or `llama3`) running within WSL, with a Next.js React frontend and a FastAPI Python backend.
+This is **Code Agent V4**, a fully functional AI Code Assistant powered by Local Ollama models (specifically `qwen3-coder:30b`) running within WSL, with a Next.js React frontend and a FastAPI Python backend.
 
 ## 🚀 Features
 
