@@ -41,10 +41,12 @@ logger = logging.getLogger(__name__)
 USE_LOCAL_OLLAMA = os.getenv("USE_LOCAL_OLLAMA", "False").lower() == "true"
 
 if USE_LOCAL_OLLAMA:
-    # Local Ollama (same machine)
-    os.environ["OPENAI_API_BASE"] = "http://localhost:11434/v1"
+    # Local Ollama running in WSL2
+    # WSL2 doesn't always forward ports to localhost, so we use the WSL IP directly.
+    WSL_IP = os.getenv("WSL_OLLAMA_IP", "172.26.139.56")
+    os.environ["OPENAI_API_BASE"] = f"http://{WSL_IP}:11434/v1"
     os.environ["OPENAI_API_KEY"] = "sk-dummy"
-    logger.info("🏠 Using Local Ollama: http://localhost:11434")
+    logger.info(f"🏠 Using Local Ollama (WSL): http://{WSL_IP}:11434")
 else:
     # Remote Ollama via Ngrok (different machine)
     os.environ["OPENAI_API_BASE"] = "https://jo-recent-deanne.ngrok-free.dev/v1"
@@ -250,8 +252,39 @@ async def chat_endpoint(request: ChatRequest):
         loop_count = 0
         max_loops = 15
         
+        # --- PLAN COMPLETION TRACKING ---
+        planned_files = set()    # Files mentioned in the plan
+        created_files = set()    # Files actually created by tools
+        verification_done = False  # Whether we've already done the verification check
+        lazy_retry_count = 0       # Track narrative retry count
+        
+        # Extract planned files from previous plan messages in history
+        import re
+        file_ext_pattern = re.compile(r'[\w\-./\\]+\.(?:py|js|html|css|txt|md|json|yaml|yml|toml|cfg|ini|sh|bat|jsx|tsx|ts|sql|xml|csv)', re.IGNORECASE)
+        for msg in messages:
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                if content and any(kw in content.lower() for kw in ["implementation plan", "proposed file", "execution plan", "file structure"]):
+                    # Extract file names from plan
+                    found_files = file_ext_pattern.findall(content)
+                    for f in found_files:
+                        # Clean up: get just the filename (last part of path)
+                        clean_name = f.replace("\\", "/").split("/")[-1].strip()
+                        if clean_name and len(clean_name) > 2:
+                            planned_files.add(clean_name.lower())
+        
+        if planned_files:
+            logger.info(f"📋 Planned files extracted: {planned_files}")
+        
         while loop_count < max_loops:
             loop_count += 1
+            
+            # After verification round completed, skip extra model calls — just finish
+            if verification_done:
+                logger.info("✅ Verification round complete — finishing immediately.")
+                yield json.dumps({"type": "done", "content": ""}) + "\n"
+                break
+            
             yield json.dumps({"type": "status", "content": f"Thinking... (Step {loop_count})"}) + "\n"
             
             try:
@@ -272,7 +305,9 @@ async def chat_endpoint(request: ChatRequest):
                         if delta.content:
                             content_chunk = delta.content
                             collected_content += content_chunk
-                            yield json.dumps({"type": "content", "content": content_chunk}) + "\n"
+                            # Don't stream duplicate content to frontend during verification round
+                            if not verification_done:
+                                yield json.dumps({"type": "content", "content": content_chunk}) + "\n"
                         
                         if delta.tool_calls:
                             for tc in delta.tool_calls:
@@ -284,14 +319,35 @@ async def chat_endpoint(request: ChatRequest):
                                         if tc.function.name: collected_tool_calls[tc.index]["function"]["name"] += tc.function.name
                                         if tc.function.arguments: collected_tool_calls[tc.index]["function"]["arguments"] += tc.function.arguments
                 
-                # Check if we have tool calls
+                # --- PLAN DETECTION: Stop execution if the LLM produced a plan ---
+                is_plan = False
+                if collected_content:
+                    lower_content = collected_content.lower()
+                    has_plan_header = any(kw in lower_content for kw in ["implementation plan", "proposed file", "execution plan", "proposed steps"])
+                    has_approval_question = any(kw in lower_content for kw in ["do you approve", "approve this plan", "approve?"])
+                    is_plan = has_plan_header and has_approval_question
+                
+                if is_plan:
+                    # Extract planned files from this plan
+                    found_files = file_ext_pattern.findall(collected_content)
+                    for f in found_files:
+                        clean_name = f.replace("\\", "/").split("/")[-1].strip()
+                        if clean_name and len(clean_name) > 2:
+                            planned_files.add(clean_name.lower())
+                    
+                    add_message(request.session_id, "assistant", collected_content)
+                    logger.info(f"📋 Plan detected — planned files: {planned_files}")
+                    yield json.dumps({"type": "plan_awaiting_approval", "content": ""}) + "\n"
+                    break
+
+                # Check if we have API-level tool calls (only executed if NOT a plan)
                 if collected_tool_calls:
                     messages.append({
                         "role": "assistant",
                         "content": collected_content,
                         "tool_calls": collected_tool_calls
                     })
-                    add_message(request.session_id, "assistant", collected_content) # Save partial text
+                    add_message(request.session_id, "assistant", collected_content)
                     
                     for tc in collected_tool_calls:
                         tool_name = tc["function"]["name"]
@@ -300,15 +356,20 @@ async def chat_endpoint(request: ChatRequest):
                         
                         yield json.dumps({"type": "status", "content": f"Running Tool: {tool_name}"}) + "\n"
                         
-                        # Find the tool function
                         tool_func = next((t for t in current_tools if t.__name__ == tool_name), None)
                         
                         tool_output = f"Error: Tool {tool_name} not found"
+                        args = {}
                         if tool_func:
                             try:
                                 args = json.loads(tool_args_str)
                                 result = tool_func(**args)
                                 tool_output = str(result)
+                                # Track created files
+                                if tool_name == "write_code" and "success" in tool_output.lower():
+                                    fname = args.get("filename", "")
+                                    if fname:
+                                        created_files.add(fname.lower())
                             except Exception as e:
                                 tool_output = f"Error executing {tool_name}: {str(e)}"
                         
@@ -317,14 +378,217 @@ async def chat_endpoint(request: ChatRequest):
                             "tool_call_id": tool_call_id,
                             "content": tool_output
                         })
-                        yield json.dumps({"type": "tool_output", "tool": tool_name, "output": tool_output}) + "\n"
+                        yield json.dumps({"type": "tool_output", "tool": tool_name, "output": tool_output, "args": args}) + "\n"
                         
-                    # Continue loop to let LLM see tool output
                     continue
                 
-                # If no tool calls and we have content, we are done
-                if not collected_tool_calls:
-                    add_message(request.session_id, "assistant", collected_content)
+                # --- TEXT-BASED FUNCTION CALL DETECTION ---
+                import re as re2
+                text_tool_calls = []
+                
+                if collected_content and not collected_tool_calls:
+                    func_pattern = re2.compile(
+                        r'<function=(\w+)>\s*(.*?)\s*</function>',
+                        re2.DOTALL
+                    )
+                    param_pattern = re2.compile(
+                        r'<parameter=(\w+)>\s*(.*?)\s*</parameter>',
+                        re2.DOTALL
+                    )
+                    
+                    for func_match in func_pattern.finditer(collected_content):
+                        func_name = func_match.group(1)
+                        func_body = func_match.group(2)
+                        args = {}
+                        for param_match in param_pattern.finditer(func_body):
+                            param_name = param_match.group(1)
+                            param_value = param_match.group(2).strip()
+                            args[param_name] = param_value
+                        text_tool_calls.append({"name": func_name, "args": args})
+                    
+                    tool_call_pattern = re2.compile(
+                        r'<tool_call>\s*(\{.*?\})\s*</tool_call>',
+                        re2.DOTALL
+                    )
+                    for tc_match in tool_call_pattern.finditer(collected_content):
+                        try:
+                            tc_data = json.loads(tc_match.group(1))
+                            tc_name = tc_data.get("name", "")
+                            tc_args = tc_data.get("arguments", {})
+                            if isinstance(tc_args, str):
+                                tc_args = json.loads(tc_args)
+                            text_tool_calls.append({"name": tc_name, "args": tc_args})
+                        except json.JSONDecodeError:
+                            pass
+                
+                if text_tool_calls:
+                    logger.info(f"📝 Detected {len(text_tool_calls)} text-based function call(s)")
+                    
+                    # Strip the raw function call markup from the displayed content
+                    cleaned_content = collected_content
+                    # Remove <function=...>...</function> blocks
+                    cleaned_content = re.sub(
+                        r'<function=\w+>\s*.*?\s*</function>',
+                        '', cleaned_content, flags=re.DOTALL
+                    )
+                    # Remove <tool_call>...</tool_call> blocks  
+                    cleaned_content = re.sub(
+                        r'<tool_call>\s*.*?\s*</tool_call>',
+                        '', cleaned_content, flags=re.DOTALL
+                    )
+                    # Remove any stray </tool_call> or </function> tags
+                    cleaned_content = re.sub(r'</tool_call>', '', cleaned_content)
+                    cleaned_content = re.sub(r'</function>', '', cleaned_content)
+                    # Clean up excessive whitespace
+                    cleaned_content = re.sub(r'\n{3,}', '\n\n', cleaned_content).strip()
+                    
+                    # Send cleaned content update to frontend (replaces the raw text)
+                    if cleaned_content != collected_content:
+                        yield json.dumps({"type": "content_replace", "content": cleaned_content}) + "\n"
+                    
+                    add_message(request.session_id, "assistant", cleaned_content or collected_content)
+                    
+                    tool_name_map = {
+                        "create_file": "write_code",
+                        "write_file": "write_code",
+                        "edit_file": "edit_code",
+                        "execute_command": "run_command",
+                        "exec_command": "run_command",
+                        "shell": "run_command",
+                        "search": "web_search",
+                    }
+                    
+                    param_name_map = {
+                        "filepath": "filename",
+                        "file_path": "filename",
+                        "path": "filename",
+                        "file_name": "filename",
+                        "content": "code_content",
+                        "code": "code_content",
+                        "command": "command",
+                        "cmd": "command",
+                        "directory": "subdirectory",
+                        "dir": "subdirectory",
+                        "desc": "description",
+                    }
+                    
+                    messages.append({
+                        "role": "assistant",
+                        "content": collected_content,
+                    })
+                    
+                    for tc in text_tool_calls:
+                        raw_name = tc["name"]
+                        mapped_name = tool_name_map.get(raw_name, raw_name)
+                        
+                        yield json.dumps({"type": "status", "content": f"Running Tool: {mapped_name}"}) + "\n"
+                        
+                        tool_func = next((t for t in current_tools if t.__name__ == mapped_name), None)
+                        if not tool_func:
+                            tool_func = next((t for t in current_tools if t.__name__ == raw_name), None)
+                        
+                        tool_output = f"Error: Tool {raw_name} not found"
+                        args = tc["args"]
+                        
+                        mapped_args = {}
+                        for k, v in args.items():
+                            mapped_key = param_name_map.get(k, k)
+                            mapped_args[mapped_key] = v
+                        
+                        if mapped_name == "write_code" and "filename" in mapped_args:
+                            fp = mapped_args["filename"]
+                            if "/" in fp or "\\" in fp:
+                                parts = fp.replace("\\", "/").rsplit("/", 1)
+                                if len(parts) == 2:
+                                    mapped_args["subdirectory"] = parts[0]
+                                    mapped_args["filename"] = parts[1]
+                        
+                        if tool_func:
+                            try:
+                                result = tool_func(**mapped_args)
+                                tool_output = str(result)
+                                # Track created files
+                                if mapped_name == "write_code" and "success" in tool_output.lower():
+                                    fname = mapped_args.get("filename", "")
+                                    if fname:
+                                        created_files.add(fname.lower())
+                            except Exception as e:
+                                tool_output = f"Error executing {mapped_name}: {str(e)}"
+                        
+                        fake_tool_call_id = str(uuid.uuid4())
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": fake_tool_call_id,
+                            "content": tool_output
+                        })
+                        yield json.dumps({"type": "tool_output", "tool": mapped_name, "output": tool_output, "args": mapped_args}) + "\n"
+                    
+                    continue
+                
+                # If no tool calls (API or text-based) and we have content...
+                if not collected_tool_calls and not text_tool_calls:
+                    # Check if the model is writing narrative instead of using tools
+                    lazy_patterns = [
+                        "let me create", "let me continue", "let me write",
+                        "i will now", "i'll create", "i'll now", "let me build",
+                        "let me implement", "let me set up", "let me add",
+                        "let me start", "i will create", "i will write",
+                        "let me proceed", "let me generate", "now i'll",
+                        "let me make", "i'll write", "i'll implement",
+                    ]
+                    lower = collected_content.lower() if collected_content else ""
+                    is_lazy = any(p in lower for p in lazy_patterns)
+                    
+                    if is_lazy and lazy_retry_count < 3:
+                        lazy_retry_count += 1
+                        logger.warning(f"⚠️ Model wrote narrative without tool calls (retry {lazy_retry_count}/3). Injecting reminder.")
+                        
+                        messages.append({
+                            "role": "assistant",
+                            "content": collected_content,
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": "SYSTEM REMINDER: Do NOT describe what you will do. You MUST call the write_code tool RIGHT NOW to create the files. Use function calls, not text. Proceed immediately with tool calls."
+                        })
+                        yield json.dumps({"type": "status", "content": "Retrying with tool calls..."}) + "\n"
+                        continue
+                    
+                    # --- PLAN COMPLETION VERIFICATION ---
+                    if planned_files and not verification_done:
+                        missing_files = planned_files - created_files
+                        # Filter out common false positives
+                        missing_files = {f for f in missing_files if not f.startswith("requirements") or "requirements.txt" in planned_files}
+                        
+                        if missing_files and len(missing_files) <= 10:
+                            verification_done = True  # Only try once
+                            missing_list = ", ".join(sorted(missing_files))
+                            logger.info(f"🔍 Verification: Missing files: {missing_list}")
+                            logger.info(f"🔍 Created files so far: {created_files}")
+                            
+                            # Save the current content as the "done" message — don't let model repeat it
+                            add_message(request.session_id, "assistant", collected_content)
+                            
+                            messages.append({
+                                "role": "assistant", 
+                                "content": collected_content,
+                            })
+                            messages.append({
+                                "role": "user",
+                                "content": f"VERIFICATION CHECK: The following files from the plan have NOT been created yet: {missing_list}. Create them NOW using write_code tool. IMPORTANT: After creating the files, respond with ONLY 'All files created.' — do NOT repeat the project summary or completion message."
+                            })
+                            yield json.dumps({"type": "status", "content": f"Verifying plan completion... Missing {len(missing_files)} file(s)"}) + "\n"
+                            continue
+                        else:
+                            if not missing_files:
+                                logger.info("✅ All planned files have been created!")
+                    
+                    # Actually done
+                    if verification_done:
+                        # After verification round, we already saved content — just finish silently
+                        logger.info("✅ Verification round complete — finishing.")
+                    else:
+                        add_message(request.session_id, "assistant", collected_content)
                     yield json.dumps({"type": "done", "content": ""}) + "\n"
                     break
                 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
     Terminal,
     MessageSquare,
@@ -16,7 +16,20 @@ import {
     Trash2,
     Edit2,
     Clipboard,
-    Check
+    Check,
+    PanelRightClose,
+    PanelRightOpen,
+    CheckCircle2,
+    Pencil,
+    FileCode2,
+    X,
+    Loader2,
+    Wrench,
+    ChevronDown,
+    ChevronRight,
+    Globe,
+    FileCheck2,
+    AlertTriangle
 } from "lucide-react";
 import axios from "axios";
 import { clsx, type ClassValue } from "clsx";
@@ -46,6 +59,43 @@ interface Session {
     name: string;
     last_active: string;
     project_path?: string;
+}
+
+interface CodeFile {
+    name: string;
+    path: string;
+    content: string;
+    language: string;
+    status: "writing" | "done" | "error";
+}
+
+interface ActivityLogEntry {
+    id: number;
+    type: "thinking" | "tool" | "tool_result" | "verification" | "retry" | "done";
+    label: string;
+    detail?: string;
+    timestamp: number;
+}
+
+// --- Helper: detect file language from extension ---
+function detectLanguage(filename: string): string {
+    const ext = filename.split(".").pop()?.toLowerCase() || "";
+    const map: Record<string, string> = {
+        py: "python", js: "javascript", ts: "typescript", tsx: "tsx", jsx: "jsx",
+        html: "html", css: "css", json: "json", md: "markdown", txt: "text",
+        sh: "bash", yml: "yaml", yaml: "yaml", sql: "sql", java: "java",
+        cpp: "cpp", c: "c", rs: "rust", go: "go", rb: "ruby", php: "php",
+    };
+    return map[ext] || "text";
+}
+
+// --- Helper: detect if message contains a plan awaiting approval ---
+function isPlanMessage(content: string): boolean {
+    if (!content) return false;
+    const lower = content.toLowerCase();
+    const hasPlanHeader = /##?\s*(implementation plan|proposed|plan)/i.test(content);
+    const hasApprovalQuestion = /(do you approve|approve this plan|do you accept|approve\s*\?)/i.test(lower);
+    return hasPlanHeader && hasApprovalQuestion;
 }
 
 // --- Helper to clean generic JSON wrappers ---
@@ -109,7 +159,7 @@ const CodeBlock = ({ node, inline, className, children, ...props }: any) => {
     );
 };
 
-// --- Components ---
+// --- Sidebar Components ---
 
 const SidebarWorkspace = ({
     workspace,
@@ -124,7 +174,7 @@ const SidebarWorkspace = ({
     onDeleteSession,
     onRenameSession,
     activeSessionId,
-    isStreaming // Added prop support
+    isStreaming
 }: any) => {
     const [showMenu, setShowMenu] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -140,7 +190,7 @@ const SidebarWorkspace = ({
     }, []);
 
     return (
-        <div className="mb-1">
+        <div className={cn("mb-1", showMenu ? "z-50 relative" : "z-0 relative")}>
             <div
                 className={cn(
                     "group flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors cursor-pointer relative pr-16",
@@ -152,7 +202,10 @@ const SidebarWorkspace = ({
                 <span className="truncate flex-1 font-medium select-none text-xs uppercase tracking-wider">
                     {workspace.name}
                 </span>
-                <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className={cn(
+                    "absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 transition-opacity",
+                    showMenu ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                )}>
                     <button
                         onClick={(e) => { e.stopPropagation(); onAddSession(); }}
                         className="p-1 hover:bg-white/20 rounded text-muted-foreground hover:text-white"
@@ -168,7 +221,10 @@ const SidebarWorkspace = ({
                             <MoreVertical className="w-3.5 h-3.5" />
                         </button>
                         {showMenu && (
-                            <div className="absolute right-0 top-full mt-1 w-32 bg-[#1e1e20] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
+                            <div
+                                className="absolute right-0 top-full mt-1 w-32 bg-[#1e1e20] border border-white/10 rounded-lg shadow-2xl z-[100] overflow-hidden"
+                                onClick={(e) => e.stopPropagation()}
+                            >
                                 <button
                                     onClick={(e) => { e.stopPropagation(); setShowMenu(false); onRenameWorkspace(); }}
                                     className="w-full text-left px-3 py-2 text-xs hover:bg-white/10 flex items-center gap-2 text-gray-300"
@@ -267,7 +323,10 @@ const SidebarItem = ({
                         <MoreVertical className="w-3.5 h-3.5" />
                     </button>
                     {showMenu && (
-                        <div className="absolute right-0 top-full mt-1 w-32 bg-[#1e1e20] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
+                        <div
+                            className="absolute right-0 top-full mt-1 w-32 bg-[#1e1e20] border border-white/10 rounded-lg shadow-2xl z-[100] overflow-hidden"
+                            onClick={(e) => e.stopPropagation()}
+                        >
                             {onRename && (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); setShowMenu(false); onRename(); }}
@@ -292,6 +351,147 @@ const SidebarItem = ({
     );
 };
 
+// --- Plan Approval Buttons Component ---
+const PlanApprovalButtons = ({ onAccept, onModify }: { onAccept: () => void; onModify: () => void }) => {
+    return (
+        <div className="flex items-center gap-3 mt-4 pt-4 border-t border-white/10">
+            <button
+                onClick={onAccept}
+                className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-all shadow-lg shadow-green-900/30 hover:shadow-green-800/40 text-sm"
+            >
+                <CheckCircle2 className="w-4 h-4" />
+                Accept Plan
+            </button>
+            <button
+                onClick={onModify}
+                className="flex items-center gap-2 px-5 py-2.5 bg-secondary/50 hover:bg-secondary/80 text-gray-300 hover:text-white font-medium rounded-lg transition-all border border-white/10 text-sm"
+            >
+                <Pencil className="w-4 h-4" />
+                Need Modification
+            </button>
+        </div>
+    );
+};
+
+// --- Code Panel Component (Resizable) ---
+const CodePanel = ({ codeFiles, activeTab, setActiveTab, onClose, width, onResizeStart }: {
+    codeFiles: CodeFile[];
+    activeTab: number;
+    setActiveTab: (idx: number) => void;
+    onClose: () => void;
+    width: number;
+    onResizeStart: (e: React.MouseEvent) => void;
+}) => {
+    const panelContent = codeFiles.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+            <div className="text-center">
+                <FileCode2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                <p>No files yet</p>
+                <p className="text-xs opacity-60 mt-1">Files will appear here as the agent writes code</p>
+            </div>
+        </div>
+    ) : null;
+
+    const currentFile = codeFiles[activeTab] || codeFiles[0];
+
+    return (
+        <div className="flex flex-row h-full shrink-0" style={{ width: `${width}px` }}>
+            {/* Resize Handle */}
+            <div
+                onMouseDown={onResizeStart}
+                className="w-1.5 cursor-col-resize group flex items-center justify-center hover:bg-purple-500/20 active:bg-purple-500/30 transition-colors shrink-0 relative"
+                title="Drag to resize"
+            >
+                <div className="w-[2px] h-8 bg-white/10 group-hover:bg-purple-500 group-active:bg-purple-400 rounded-full transition-colors" />
+            </div>
+
+            {/* Panel Content */}
+            <div className="flex-1 border-l border-border bg-card flex flex-col min-w-0">
+                {/* Header */}
+                <div className="h-14 flex items-center justify-between px-4 border-b border-border shrink-0">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                        <FileCode2 className="w-4 h-4 text-purple-400" />
+                        Code Files
+                        {codeFiles.length > 0 && (
+                            <span className="text-xs text-muted-foreground bg-secondary/50 px-2 py-0.5 rounded-full">
+                                {codeFiles.length}
+                            </span>
+                        )}
+                    </div>
+                    <button onClick={onClose} className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white transition">
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+
+                {panelContent ? panelContent : (
+                    <>
+                        {/* Tabs */}
+                        <div className="flex border-b border-border overflow-x-auto scrollbar-hide shrink-0">
+                            {codeFiles.map((file, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => setActiveTab(idx)}
+                                    className={cn(
+                                        "flex items-center gap-1.5 px-3 py-2 text-xs font-mono whitespace-nowrap border-b-2 transition-colors",
+                                        idx === activeTab
+                                            ? "border-purple-500 text-white bg-secondary/30"
+                                            : "border-transparent text-muted-foreground hover:text-white hover:bg-secondary/20"
+                                    )}
+                                >
+                                    <FileCode2 className="w-3 h-3" />
+                                    {file.name}
+                                    {file.status === "writing" && (
+                                        <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                                    )}
+                                    {file.status === "done" && (
+                                        <Check className="w-3 h-3 text-green-400" />
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* File Info */}
+                        <div className="px-4 py-2 bg-[#1e1e2e] border-b border-white/5 flex items-center justify-between shrink-0">
+                            <span className="text-xs text-muted-foreground font-mono truncate">{currentFile.path}</span>
+                            <span className={cn(
+                                "text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0",
+                                currentFile.status === "done" ? "bg-green-900/30 text-green-400" :
+                                    currentFile.status === "writing" ? "bg-yellow-900/30 text-yellow-400" :
+                                        "bg-red-900/30 text-red-400"
+                            )}>
+                                {currentFile.status === "done" ? "Created" : currentFile.status === "writing" ? "Writing..." : "Error"}
+                            </span>
+                        </div>
+
+                        {/* Code Content */}
+                        <div className="flex-1 overflow-auto">
+                            <SyntaxHighlighter
+                                style={vscDarkPlus}
+                                language={currentFile.language}
+                                showLineNumbers
+                                customStyle={{
+                                    margin: 0,
+                                    padding: "16px",
+                                    background: "transparent",
+                                    fontSize: "12px",
+                                    lineHeight: "1.6",
+                                    minHeight: "100%",
+                                }}
+                                lineNumberStyle={{ color: "#555", fontSize: "11px" }}
+                            >
+                                {currentFile.content}
+                            </SyntaxHighlighter>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
+
+
+// ==================== MAIN COMPONENT ====================
+
 export default function AgentManager() {
     const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -302,6 +502,55 @@ export default function AgentManager() {
     const [input, setInput] = useState("");
     const [isStreaming, setIsStreaming] = useState(false);
     const [statusMessage, setStatusMessage] = useState("");
+    const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+    const [showActivityLog, setShowActivityLog] = useState(true);
+    const activityIdRef = useRef(0);
+
+    // Plan approval state
+    const [pendingPlanApproval, setPendingPlanApproval] = useState(false);
+    const [planMessageIndex, setPlanMessageIndex] = useState<number | null>(null);
+
+    // Code panel state
+    const [codeFiles, setCodeFiles] = useState<CodeFile[]>([]);
+    const [showCodePanel, setShowCodePanel] = useState(false);
+    const [activeFileTab, setActiveFileTab] = useState(0);
+    const [codePanelWidth, setCodePanelWidth] = useState(480);
+    const isResizingRef = useRef(false);
+    const resizeStartXRef = useRef(0);
+    const resizeStartWidthRef = useRef(480);
+
+    // --- Resize handlers for code panel ---
+    const handleResizeStart = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+        isResizingRef.current = true;
+        resizeStartXRef.current = e.clientX;
+        resizeStartWidthRef.current = codePanelWidth;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    }, [codePanelWidth]);
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isResizingRef.current) return;
+            // Dragging LEFT increases width (panel is on the right)
+            const delta = resizeStartXRef.current - e.clientX;
+            const newWidth = Math.min(900, Math.max(300, resizeStartWidthRef.current + delta));
+            setCodePanelWidth(newWidth);
+        };
+        const handleMouseUp = () => {
+            if (isResizingRef.current) {
+                isResizingRef.current = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        };
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, []);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -335,6 +584,9 @@ export default function AgentManager() {
 
     const loadSession = async (sessionId: string) => {
         setActiveSessionId(sessionId);
+        setPendingPlanApproval(false);
+        setPlanMessageIndex(null);
+        setCodeFiles([]);
         try {
             const res = await axios.get(`http://localhost:8000/sessions/${sessionId}/history`);
             setMessages(res.data);
@@ -408,6 +660,9 @@ export default function AgentManager() {
             setSessions([newSession, ...sessions]);
             setActiveSessionId(newSession.session_id);
             setMessages([]);
+            setPendingPlanApproval(false);
+            setPlanMessageIndex(null);
+            setCodeFiles([]);
         } catch (err) { console.error(err); }
     };
 
@@ -424,6 +679,9 @@ export default function AgentManager() {
             setSessions([newSession, ...sessions]);
             setActiveSessionId(newSession.session_id);
             setMessages([]);
+            setPendingPlanApproval(false);
+            setPlanMessageIndex(null);
+            setCodeFiles([]);
             if (wsPath) setExpandedWorkspaces(prev => new Set(prev).add(wsPath));
         } catch (err) { console.error(err); }
     };
@@ -431,14 +689,19 @@ export default function AgentManager() {
     const inboxSessions = sessions.filter(s => !s.project_path);
     const getWorkspaceSessions = (path: string) => sessions.filter(s => s.project_path === path);
 
-    const handleSend = async () => {
-        if (!input.trim() || !activeSessionId) return;
+    // --- Core send function (used by both user input and plan approval) ---
+    const sendMessage = async (messageText: string) => {
+        if (!messageText.trim() || !activeSessionId) return;
 
-        const userMessage = { role: "user" as const, content: input };
+        const userMessage = { role: "user" as const, content: messageText };
         setMessages(prev => [...prev, userMessage]);
         setInput("");
         setIsStreaming(true);
+        setActivityLog([]);
+        activityIdRef.current = 0;
         setStatusMessage("Thinking...");
+        setPendingPlanApproval(false);
+        setPlanMessageIndex(null);
 
         setMessages(prev => [...prev, { role: "assistant", content: "" }]);
 
@@ -448,7 +711,7 @@ export default function AgentManager() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     session_id: activeSessionId,
-                    message: userMessage.content,
+                    message: messageText,
                     model: "openai/qwen3-coder:30b",
                     web_search: false
                 })
@@ -487,6 +750,91 @@ export default function AgentManager() {
                         }
                         else if (data.type === "status") {
                             setStatusMessage(data.content);
+                            const statusText = data.content as string;
+                            // Determine log entry type based on content
+                            let logType: ActivityLogEntry["type"] = "thinking";
+                            if (statusText.startsWith("Running Tool:")) logType = "tool";
+                            else if (statusText.includes("Verifying")) logType = "verification";
+                            else if (statusText.includes("Retrying")) logType = "retry";
+
+                            activityIdRef.current += 1;
+                            setActivityLog(prev => [...prev, {
+                                id: activityIdRef.current,
+                                type: logType,
+                                label: statusText,
+                                timestamp: Date.now()
+                            }]);
+                        }
+                        else if (data.type === "content_replace") {
+                            // Backend stripped raw tool call tags — replace the message content
+                            assistantContent = data.content;
+                            updateMessage(assistantContent);
+                        }
+                        else if (data.type === "tool_output") {
+                            // Add tool result to activity log
+                            const toolName = data.tool || "unknown";
+                            const isToolSuccess = typeof data.output === "string" && data.output.toLowerCase().includes("success");
+                            const isToolError = typeof data.output === "string" && data.output.toLowerCase().includes("error");
+                            activityIdRef.current += 1;
+                            setActivityLog(prev => [...prev, {
+                                id: activityIdRef.current,
+                                type: "tool_result" as const,
+                                label: `${toolName}: ${isToolSuccess ? "✓ Success" : isToolError ? "✗ Error" : "Done"}`,
+                                detail: typeof data.output === "string" ? data.output.substring(0, 150) : "",
+                                timestamp: Date.now()
+                            }]);
+                            // Handle code file display
+                            if (data.tool === "write_code" && data.args) {
+                                const fileName = data.args.filename || "unknown";
+                                const codeContent = data.args.code_content || "";
+                                const filePath = data.args.subdirectory
+                                    ? `${data.args.subdirectory}/${fileName}`
+                                    : fileName;
+                                const isSuccess = data.output?.includes?.("success") ||
+                                    (typeof data.output === "string" && data.output.includes("success"));
+
+                                const newFile: CodeFile = {
+                                    name: fileName,
+                                    path: filePath,
+                                    content: codeContent,
+                                    language: detectLanguage(fileName),
+                                    status: isSuccess ? "done" : "error"
+                                };
+
+                                setCodeFiles(prev => {
+                                    // Replace if same filename exists, otherwise add
+                                    const exists = prev.findIndex(f => f.name === fileName);
+                                    if (exists >= 0) {
+                                        const updated = [...prev];
+                                        updated[exists] = newFile;
+                                        return updated;
+                                    }
+                                    return [...prev, newFile];
+                                });
+                                setActiveFileTab(prev => {
+                                    // Auto-switch to new file
+                                    return prev; // Keep current for now, will update after state
+                                });
+                                setShowCodePanel(true);
+                            }
+                        }
+                        else if (data.type === "plan_awaiting_approval") {
+                            // Backend detected a plan and stopped execution — show approval buttons
+                            setMessages(prev => {
+                                setPlanMessageIndex(prev.length - 1);
+                                return prev;
+                            });
+                            setPendingPlanApproval(true);
+                        }
+                        else if (data.type === "done") {
+                            // Fallback: also check on 'done' in case backend didn't detect plan
+                            if (isPlanMessage(assistantContent)) {
+                                setMessages(prev => {
+                                    setPlanMessageIndex(prev.length - 1);
+                                    return prev;
+                                });
+                                setPendingPlanApproval(true);
+                            }
                         }
                     } catch (e) { console.error(e); }
                 }
@@ -496,13 +844,37 @@ export default function AgentManager() {
         } finally {
             setIsStreaming(false);
             setStatusMessage("");
+            // Add a 'done' entry to the log
+            activityIdRef.current += 1;
+            setActivityLog(prev => [...prev, {
+                id: activityIdRef.current,
+                type: "done",
+                label: "Response complete",
+                timestamp: Date.now()
+            }]);
         }
+    };
+
+    const handleSend = async () => {
+        await sendMessage(input);
+    };
+
+    const handlePlanAccept = () => {
+        setPendingPlanApproval(false);
+        setPlanMessageIndex(null);
+        sendMessage("Yes, approved. Proceed with execution.");
+    };
+
+    const handlePlanModify = () => {
+        setPendingPlanApproval(false);
+        setPlanMessageIndex(null);
+        setInput("I'd like to modify the plan: ");
     };
 
     return (
         <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
             {/* Sidebar */}
-            <div className="w-64 border-r border-border bg-card flex flex-col">
+            <div className="w-64 border-r border-border bg-card flex flex-col shrink-0">
                 <div className="h-14 flex items-center px-4 border-b border-border glass">
                     <Box className="w-5 h-5 text-purple-500 mr-2" />
                     <span className="font-semibold text-lg">Agent Manager</span>
@@ -580,99 +952,192 @@ export default function AgentManager() {
                                 {statusMessage || "Thinking..."}
                             </div>
                         )}
+                        {/* Code Panel Toggle Button */}
+                        <button
+                            onClick={() => setShowCodePanel(!showCodePanel)}
+                            className={cn(
+                                "p-2 rounded-lg transition-colors",
+                                showCodePanel
+                                    ? "bg-purple-500/20 text-purple-400"
+                                    : "text-gray-400 hover:text-white hover:bg-secondary/50"
+                            )}
+                            title={showCodePanel ? "Hide Code Panel" : "Show Code Panel"}
+                        >
+                            {showCodePanel ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+                        </button>
                         <div className="px-3 py-1.5 bg-secondary/50 rounded-full text-xs font-mono text-muted-foreground flex items-center gap-2">
                             <Cpu className="w-3.5 h-3.5" /> Qwen3-Coder
                         </div>
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth code-font">
-                    <div className="max-w-3xl mx-auto space-y-6">
-                        {!activeSessionId && (
-                            <div className="text-center py-20">
-                                <div className="w-16 h-16 bg-secondary/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                                    <Box className="w-8 h-8 text-purple-400" />
-                                </div>
-                                <h2 className="text-2xl font-bold mb-2">Welcome to Code Agent</h2>
-                                <p className="text-muted-foreground">Select a workspace or create a new session to get started.</p>
-                                <button
-                                    onClick={handleNewSession}
-                                    className="mt-6 px-6 py-2 bg-white text-black font-medium rounded-full hover:bg-gray-200 transition"
-                                >
-                                    Start Creation
-                                </button>
-                            </div>
-                        )}
-
-                        {messages.map((msg, idx) => (
-                            <div key={idx} className={cn("flex gap-4", msg.role === "user" ? "justify-end" : "justify-start")}>
-                                {msg.role === "assistant" && (
-                                    <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0">
-                                        <Code className="w-4 h-4 text-blue-400" />
+                {/* Chat + Code Panel Container */}
+                <div className="flex-1 flex min-h-0">
+                    {/* Chat Area */}
+                    <div className="flex-1 flex flex-col min-w-0">
+                        <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth code-font">
+                            <div className="max-w-3xl mx-auto space-y-6">
+                                {!activeSessionId && (
+                                    <div className="text-center py-20">
+                                        <div className="w-16 h-16 bg-secondary/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                                            <Box className="w-8 h-8 text-purple-400" />
+                                        </div>
+                                        <h2 className="text-2xl font-bold mb-2">Welcome to Code Agent</h2>
+                                        <p className="text-muted-foreground">Select a workspace or create a new session to get started.</p>
+                                        <button
+                                            onClick={handleNewSession}
+                                            className="mt-6 px-6 py-2 bg-white text-black font-medium rounded-full hover:bg-gray-200 transition"
+                                        >
+                                            Start Creation
+                                        </button>
                                     </div>
                                 )}
-                                <div className={cn(
-                                    "rounded-lg p-4 max-w-[85%] text-sm leading-relaxed",
-                                    msg.role === "user" ? "bg-secondary text-white" : "text-gray-300"
-                                )}>
-                                    {msg.role === "assistant" ? (
-                                        <ReactMarkdown
-                                            components={{
-                                                code: CodeBlock,
-                                                pre: ({ children }) => <>{children}</>,
-                                                h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 text-purple-200 border-b border-white/10 pb-2">{children}</h1>,
-                                                h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 mt-5 text-purple-100">{children}</h2>,
-                                                h3: ({ children }) => <h3 className="text-lg font-medium mb-2 mt-4 text-purple-50">{children}</h3>,
-                                                ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-1">{children}</ul>,
-                                                ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-1">{children}</ol>,
-                                                li: ({ children }) => <li className="mb-0.5">{children}</li>,
-                                                p: ({ children }) => <p className="mb-4 last:mb-0 leading-7">{children}</p>,
-                                                strong: ({ children }) => <strong className="font-bold text-white">{children}</strong>,
-                                                blockquote: ({ children }) => <blockquote className="border-l-4 border-purple-500/50 pl-4 py-1 my-4 bg-white/5 rounded-r italic">{children}</blockquote>,
-                                                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{children}</a>
-                                            }}
-                                        >
-                                            {msg.content}
-                                        </ReactMarkdown>
-                                    ) : (
-                                        <div className="whitespace-pre-wrap">{msg.content}</div>
-                                    )}
-                                    {msg.role === "assistant" && msg.content === "" && isStreaming && idx === messages.length - 1 && (
-                                        <span className="animate-pulse">▍</span>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                        <div ref={messagesEndRef} />
-                    </div>
-                </div>
 
-                <div className="p-4 border-t border-border bg-card/50 backdrop-blur pb-8">
-                    <div className="max-w-3xl mx-auto relative group">
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                            placeholder={activeSessionId ? "Ask Code Agent to build something..." : "Select a session first..."}
-                            disabled={!activeSessionId || isStreaming}
-                            className="w-full bg-secondary/50 text-white placeholder-gray-500 rounded-xl px-4 py-3 pr-12 focus:outline-none focus:ring-1 focus:ring-white/20 transition-all font-medium disabled:opacity-50"
+                                {messages.map((msg, idx) => (
+                                    <div key={idx} className={cn("flex gap-4", msg.role === "user" ? "justify-end" : "justify-start")}>
+                                        {msg.role === "assistant" && (
+                                            <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0 mt-1">
+                                                <Code className="w-4 h-4 text-blue-400" />
+                                            </div>
+                                        )}
+                                        <div className={cn(
+                                            "rounded-lg text-sm leading-relaxed",
+                                            msg.role === "user" ? "bg-secondary text-white p-4 max-w-[85%]" : "text-gray-300 max-w-[95%]"
+                                        )}>
+                                            {/* Activity Log — shown above the last assistant message */}
+                                            {msg.role === "assistant" && idx === messages.length - 1 && activityLog.length > 0 && (
+                                                <div className="mb-3">
+                                                    <button
+                                                        onClick={() => setShowActivityLog(!showActivityLog)}
+                                                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-white transition-colors mb-1.5 py-1"
+                                                    >
+                                                        {showActivityLog ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                                        <Wrench className="w-3 h-3" />
+                                                        <span>Agent Activity ({activityLog.length} steps)</span>
+                                                    </button>
+                                                    {showActivityLog && (
+                                                        <div className="border border-white/5 rounded-lg bg-[#0d1117] overflow-hidden">
+                                                            <div className="max-h-52 overflow-y-auto">
+                                                                {activityLog.map((entry, logIdx) => (
+                                                                    <div key={entry.id} className="flex items-start gap-2 px-3 py-1.5 border-b border-white/5 last:border-0 text-xs">
+                                                                        {entry.type === "thinking" && (
+                                                                            logIdx === activityLog.length - 1 && isStreaming
+                                                                                ? <Loader2 className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0 animate-spin" />
+                                                                                : <CheckCircle2 className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
+                                                                        )}
+                                                                        {entry.type === "tool" && <Wrench className="w-3.5 h-3.5 text-yellow-400 mt-0.5 shrink-0" />}
+                                                                        {entry.type === "tool_result" && (
+                                                                            entry.label.includes("✓")
+                                                                                ? <Check className="w-3 h-3 text-green-400 mt-0.5 shrink-0" />
+                                                                                : entry.label.includes("✗")
+                                                                                    ? <AlertTriangle className="w-3 h-3 text-red-400 mt-0.5 shrink-0" />
+                                                                                    : <Check className="w-3 h-3 text-blue-400 mt-0.5 shrink-0" />
+                                                                        )}
+                                                                        {entry.type === "verification" && <FileCheck2 className="w-3 h-3 text-cyan-400 mt-0.5 shrink-0" />}
+                                                                        {entry.type === "retry" && <AlertTriangle className="w-3 h-3 text-orange-400 mt-0.5 shrink-0" />}
+                                                                        {entry.type === "done" && <CheckCircle2 className="w-3 h-3 text-green-400 mt-0.5 shrink-0" />}
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <span className={cn(
+                                                                                "font-mono",
+                                                                                entry.type === "tool" ? "text-yellow-300" :
+                                                                                    entry.type === "tool_result" && entry.label.includes("✓") ? "text-green-300" :
+                                                                                        entry.type === "tool_result" && entry.label.includes("✗") ? "text-red-300" :
+                                                                                            entry.type === "verification" ? "text-cyan-300" :
+                                                                                                entry.type === "retry" ? "text-orange-300" :
+                                                                                                    entry.type === "done" ? "text-green-300" :
+                                                                                                        "text-gray-400"
+                                                                            )}>
+                                                                                {entry.label}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {msg.role === "assistant" ? (
+                                                <div className="p-4">
+                                                    <ReactMarkdown
+                                                        components={{
+                                                            code: CodeBlock,
+                                                            pre: ({ children }) => <>{children}</>,
+                                                            h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 text-purple-200 border-b border-white/10 pb-2">{children}</h1>,
+                                                            h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 mt-5 text-purple-100">{children}</h2>,
+                                                            h3: ({ children }) => <h3 className="text-lg font-medium mb-2 mt-4 text-purple-50">{children}</h3>,
+                                                            ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-1">{children}</ul>,
+                                                            ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-1">{children}</ol>,
+                                                            li: ({ children }) => <li className="mb-0.5">{children}</li>,
+                                                            p: ({ children }) => <p className="mb-4 last:mb-0 leading-7">{children}</p>,
+                                                            strong: ({ children }) => <strong className="font-bold text-white">{children}</strong>,
+                                                            blockquote: ({ children }) => <blockquote className="border-l-4 border-purple-500/50 pl-4 py-1 my-4 bg-white/5 rounded-r italic">{children}</blockquote>,
+                                                            a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">{children}</a>
+                                                        }}
+                                                    >
+                                                        {msg.content}
+                                                    </ReactMarkdown>
+                                                </div>
+                                            ) : (
+                                                <div className="whitespace-pre-wrap p-4">{msg.content}</div>
+                                            )}
+                                            {msg.role === "assistant" && msg.content === "" && isStreaming && idx === messages.length - 1 && (
+                                                <span className="animate-pulse">▍</span>
+                                            )}
+                                            {/* Plan Approval Buttons */}
+                                            {msg.role === "assistant" && pendingPlanApproval && idx === planMessageIndex && !isStreaming && (
+                                                <PlanApprovalButtons
+                                                    onAccept={handlePlanAccept}
+                                                    onModify={handlePlanModify}
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                                <div ref={messagesEndRef} />
+                            </div>
+                        </div>
+
+                        <div className="p-4 border-t border-border bg-card/50 backdrop-blur pb-8">
+                            <div className="max-w-3xl mx-auto relative group">
+                                <input
+                                    type="text"
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                                    placeholder={activeSessionId ? "Ask Code Agent to build something..." : "Select a session first..."}
+                                    disabled={!activeSessionId || isStreaming}
+                                    className="w-full bg-secondary/50 text-white placeholder-gray-500 rounded-xl px-4 py-3 pr-12 focus:outline-none focus:ring-1 focus:ring-white/20 transition-all font-medium disabled:opacity-50"
+                                />
+                                <button
+                                    onClick={handleSend}
+                                    disabled={!activeSessionId || !input.trim() || isStreaming}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white disabled:opacity-50 transition-colors"
+                                >
+                                    {isStreaming ? (
+                                        <div className="w-4 h-4 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin" />
+                                    ) : (
+                                        <Send className="w-4 h-4" />
+                                    )}
+                                </button>
+                            </div>
+                            <div className="text-center mt-2 text-[10px] text-zinc-600">
+                                Code Agent can make mistakes. Review generated code.
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Code Panel (Right Side) */}
+                    {showCodePanel && (
+                        <CodePanel
+                            codeFiles={codeFiles}
+                            activeTab={activeFileTab}
+                            setActiveTab={setActiveFileTab}
+                            onClose={() => setShowCodePanel(false)}
+                            width={codePanelWidth}
+                            onResizeStart={handleResizeStart}
                         />
-                        <button
-                            onClick={handleSend}
-                            disabled={!activeSessionId || !input.trim() || isStreaming}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white disabled:opacity-50 transition-colors"
-                        >
-                            {isStreaming ? (
-                                <div className="w-4 h-4 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin" />
-                            ) : (
-                                <Send className="w-4 h-4" />
-                            )}
-                        </button>
-                    </div>
-                    <div className="text-center mt-2 text-[10px] text-zinc-600">
-                        Code Agent can make mistakes. Review generated code.
-                    </div>
+                    )}
                 </div>
             </div>
         </div>
